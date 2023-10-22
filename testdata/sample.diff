@@ -1,7 +1,7 @@
-diff --git a/testdata/test.go b/testdata/test.go
+diff --git a/testdata/test_with_diff.go b/testdata/test_with_diff.go
 index 089369d..4ea2f97 100644
---- a/testdata/test.go
-+++ b/testdata/test.go
+--- a/testdata/test_with_diff.go
++++ b/testdata/test_with_diff.go
 @@ -5,3 +5,5 @@ func a(string, string, string, string, string, string, string, string, string, s
  }
  

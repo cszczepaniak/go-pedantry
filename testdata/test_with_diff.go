@@ -5,3 +5,5 @@ func a(string, string, string, string, string, string, string, string, string, s
 }
 
 var A = a(`123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`)
+
+var B = a(`123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`)
