@@ -9,7 +9,9 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
@@ -20,21 +22,60 @@ var (
 	input string
 )
 
+type stdoutWriteCloser struct {
+	stdout *os.File
+}
+
+func newStdoutWriteCloser() *stdoutWriteCloser {
+	return &stdoutWriteCloser{
+		stdout: os.Stdout,
+	}
+}
+
+func (s *stdoutWriteCloser) Write(p []byte) (int, error) {
+	return s.stdout.Write(p)
+}
+
+func (s *stdoutWriteCloser) Close() error {
+	return nil
+}
+
 func main() {
 	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
-	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
+	flag.StringVar(&input, `input`, `testdata`, `The input file or directory to consider.`)
 	flag.Parse()
 
 	getWriter := func(filename string) (io.WriteCloser, error) {
 		if write {
 			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
 		}
-		return os.Stdout, nil
+		return newStdoutWriteCloser(), nil
 	}
 
-	err := handleFile(input, getWriter)
+	st, err := os.Stat(input)
 	if err != nil {
 		panic(err)
+	}
+
+	if st.IsDir() {
+		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, err error) error {
+			if d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, `.go`) {
+				return nil
+			}
+
+			return handleFile(path, getWriter)
+		})
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		err = handleFile(input, getWriter)
+		if err != nil {
+			panic(err)
+		}
 	}
 }
 
@@ -55,7 +96,7 @@ func handleFile(filename string, getWriter func(filename string) (io.WriteCloser
 	}()
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, input, nil, parser.ParseComments|parser.SkipObjectResolution)
+	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return err
 	}
