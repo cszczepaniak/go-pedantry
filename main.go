@@ -1,25 +1,36 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+var (
+	write bool
+	input string
+)
+
 func main() {
+	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
+	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
+	flag.Parse()
+
+	var w io.Writer = os.Stdout
+
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, ``, []byte(sampleCode2), parser.SpuriousErrors)
+	f, err := parser.ParseFile(fset, input, nil, parser.SpuriousErrors)
 	if err != nil {
 		panic(err)
 	}
-
-	dumpAST(fset, f)
 
 	newF := astutil.Apply(f,
 		func(c *astutil.Cursor) bool {
@@ -49,7 +60,7 @@ func main() {
 		}, nil,
 	)
 
-	format.Node(os.Stdout, fset, newF)
+	format.Node(w, fset, newF)
 }
 
 func dumpAST(fset *token.FileSet, f *ast.File) {
@@ -168,24 +179,3 @@ func addNewline(f *token.File, at token.Pos) {
 		panic(fmt.Sprintf("could not set lines to %v", lines))
 	}
 }
-
-const sampleCode = `package something
-
-func a(aaa int, bbb bool, ccc bool, ddd string, eee int, fff bool, ggg bool, hhh int) {}
-
-func something() {
-	another.DoSomething(11111, 111, 111, 11, 11, 111111, 1111, 1111, 1111, 1111, 2).A(true).B("hey").C(abc)
-}`
-
-const sampleCode2 = `package something
-
-func a(aaa int, bbb bool, ccc bool, ddd string, eee int, fff bool, ggg bool, hhh int) {}
-`
-
-const desiredCode = `package something
-
-func something() {
-	another.
-		DoSomething(1, 2).
-		A(true)
-}`
