@@ -226,8 +226,11 @@ func writeFile(
 		}, nil,
 	)
 
-	format.Node(w, fset, newF)
-	return nil
+	newFileContents := &strings.Builder{}
+	format.Node(newFileContents, fset, newF)
+
+	_, err = io.WriteString(w, newFileContents.String())
+	return err
 }
 
 func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {
