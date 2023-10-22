@@ -211,9 +211,9 @@ func writeFile(
 				putFunctionCallArgsOnSeparateLines(tf, tn)
 
 				sel, ok := tn.Fun.(*ast.SelectorExpr)
-				if ok && hasChildCallSelector(c.Node()) {
-					chCall, childIsCall := sel.X.(*ast.CallExpr)
-					if childIsCall && sourceLengthOfList(chCall.Args) <= 50 {
+				if ok {
+					_, childIsCall := sel.X.(*ast.CallExpr)
+					if childIsCall {
 						addNewline(tf, sel.Sel.NamePos)
 					}
 					return true

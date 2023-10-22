@@ -49,6 +49,15 @@ func TestPatch(t *testing.T) {
 	})
 }
 
+func TestFormat(t *testing.T) {
+	sb := &strings.Builder{}
+
+	err := writeFile(`testdata/complex.go`, allNodes, sb)
+	require.NoError(t, err)
+
+	assertMatchesFileContents(t, `testdata/complex_exp.go`, sb.String())
+}
+
 func assertMatchesFileContents(t testing.TB, expFile string, actContents string) {
 	t.Helper()
 
