@@ -269,29 +269,6 @@ func sourceLengthOfList[T ast.Node](items []T) int {
 	return int(items[len(items)-1].End() - items[0].Pos())
 }
 
-func isCallSelector(n ast.Node) (*ast.CallExpr, *ast.SelectorExpr, bool) {
-	call, ok := n.(*ast.CallExpr)
-	if !ok {
-		return nil, nil, false
-	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return nil, nil, false
-	}
-
-	return call, sel, true
-}
-
-func hasChildCallSelector(n ast.Node) bool {
-	_, sel, ok := isCallSelector(n)
-	if !ok {
-		return false
-	}
-
-	_, _, ok = isCallSelector(sel.X)
-	return ok
-}
-
 func addNewline(f *token.File, at token.Pos) {
 	offset := f.Offset(at)
 
