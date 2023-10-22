@@ -27,7 +27,7 @@ func main() {
 	var w io.Writer = os.Stdout
 
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, input, nil, parser.SpuriousErrors)
+	f, err := parser.ParseFile(fset, input, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		panic(err)
 	}
