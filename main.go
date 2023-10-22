@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -24,12 +25,39 @@ func main() {
 	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
 	flag.Parse()
 
-	var w io.Writer = os.Stdout
+	getWriter := func(filename string) (io.WriteCloser, error) {
+		if write {
+			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+		}
+		return os.Stdout, nil
+	}
+
+	err := handleFile(input, getWriter)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func handleFile(filename string, getWriter func(filename string) (io.WriteCloser, error)) (err error) {
+	w, err := getWriter(filename)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		closeErr := w.Close()
+		if closeErr != nil {
+			if err != nil {
+				err = errors.Join(err, closeErr)
+			} else {
+				err = closeErr
+			}
+		}
+	}()
 
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, input, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		panic(err)
+		return err
 	}
 
 	newF := astutil.Apply(f,
@@ -61,6 +89,7 @@ func main() {
 	)
 
 	format.Node(w, fset, newF)
+	return nil
 }
 
 func dumpAST(fset *token.FileSet, f *ast.File) {
