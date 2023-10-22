@@ -14,12 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cszczepaniak/go-pedantry/patch"
 	"golang.org/x/tools/go/ast/astutil"
-)
-
-var (
-	write bool
-	input string
 )
 
 type stdoutWriteCloser struct {
@@ -41,15 +37,34 @@ func (s *stdoutWriteCloser) Close() error {
 }
 
 func main() {
+	var (
+		write    bool
+		patchArg string
+		input    string
+	)
+
 	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
-	flag.StringVar(&input, `input`, `testdata`, `The input file or directory to consider.`)
+	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
+	flag.StringVar(&patchArg, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
 	flag.Parse()
+
+	if patchArg != `` && input != `` {
+		panic(`patch and input cannot both be provided`)
+	}
 
 	getWriter := func(filename string) (io.WriteCloser, error) {
 		if write {
 			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
 		}
 		return newStdoutWriteCloser(), nil
+	}
+
+	if patchArg != `` {
+		err := handlePatch(patchArg, getWriter)
+		if err != nil {
+			panic(err)
+		}
+		return
 	}
 
 	st, err := os.Stat(input)
@@ -66,20 +81,81 @@ func main() {
 				return nil
 			}
 
-			return handleFile(path, getWriter)
+			return writeFile(path, func(*token.FileSet) nodeFilter {
+				return allNodesFilter{}
+			}, getWriter)
 		})
 		if err != nil {
 			panic(err)
 		}
 	} else {
-		err = handleFile(input, getWriter)
+		err = writeFile(input, func(*token.FileSet) nodeFilter {
+			return allNodesFilter{}
+		}, getWriter)
 		if err != nil {
 			panic(err)
 		}
 	}
 }
 
-func handleFile(filename string, getWriter func(filename string) (io.WriteCloser, error)) (err error) {
+func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)) error {
+	var p io.Reader
+	if patchArg == `-` {
+		p = os.Stdin
+	} else {
+		patchFile, err := os.Open(patchArg)
+		if err != nil {
+			panic(err)
+		}
+		defer patchFile.Close()
+		p = patchFile
+	}
+
+	parsed, err := patch.Parse(p)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range parsed.ChangedFiles() {
+		err := writeFile(file, func(fset *token.FileSet) nodeFilter {
+			return patchNodeFilter{
+				p:    parsed,
+				fset: fset,
+			}
+		}, getWriter)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type nodeFilter interface {
+	formatNode(n ast.Node) bool
+}
+
+type allNodesFilter struct{}
+
+func (allNodesFilter) formatNode(ast.Node) bool {
+	return true
+}
+
+type patchNodeFilter struct {
+	p    *patch.Patch
+	fset *token.FileSet
+}
+
+func (pnf patchNodeFilter) formatNode(n ast.Node) bool {
+	pos := pnf.fset.Position(n.Pos())
+	return pnf.p.IsLineTouched(pos.Filename, pos.Line)
+}
+
+func writeFile(
+	filename string,
+	getNodeFilter func(fset *token.FileSet) nodeFilter,
+	getWriter func(filename string) (io.WriteCloser, error),
+) (err error) {
 	w, err := getWriter(filename)
 	if err != nil {
 		return err
@@ -101,9 +177,21 @@ func handleFile(filename string, getWriter func(filename string) (io.WriteCloser
 		return err
 	}
 
+	originalFset := token.NewFileSet()
+	_, err = parser.ParseFile(originalFset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return err
+	}
+
+	nf := getNodeFilter(originalFset)
+
 	newF := astutil.Apply(f,
 		func(c *astutil.Cursor) bool {
 			if c.Node() == nil {
+				return true
+			}
+
+			if !nf.formatNode(c.Node()) {
 				return true
 			}
 
