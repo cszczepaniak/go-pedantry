@@ -80,29 +80,23 @@ func main() {
 				return nil
 			}
 
-			w, err := getWriter(path)
+			formatted, err := formatFile(input, allNodes)
 			if err != nil {
 				return err
 			}
-			defer w.Close()
 
-			return writeFile(path, func(*token.FileSet) nodeFilter {
-				return allNodesFilter{}
-			}, w)
+			return writeFile(input, formatted, getWriter)
 		})
 		if err != nil {
 			panic(err)
 		}
 	} else {
-		w, err := getWriter(input)
+		formatted, err := formatFile(input, allNodes)
 		if err != nil {
 			panic(err)
 		}
-		defer w.Close()
 
-		err = writeFile(input, func(*token.FileSet) nodeFilter {
-			return allNodesFilter{}
-		}, w)
+		err = writeFile(input, formatted, getWriter)
 		if err != nil {
 			panic(err)
 		}
@@ -128,21 +122,17 @@ func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)
 	}
 
 	for _, file := range parsed.ChangedFiles() {
-		w, err := getWriter(file)
+		formatted, err := formatFile(file, func(fset *token.FileSet) nodeFilter {
+			return patchNodeFilter{
+				p:    parsed,
+				fset: fset,
+			}
+		})
 		if err != nil {
 			return err
 		}
 
-		func() {
-			defer w.Close()
-
-			err = writeFile(file, func(fset *token.FileSet) nodeFilter {
-				return patchNodeFilter{
-					p:    parsed,
-					fset: fset,
-				}
-			}, w)
-		}()
+		err = writeFile(file, formatted, getWriter)
 		if err != nil {
 			return err
 		}
@@ -175,21 +165,31 @@ func (pnf patchNodeFilter) formatNode(n ast.Node) bool {
 	return pnf.p.IsLineTouched(pos.Filename, pos.Line)
 }
 
-func writeFile(
+func writeFile(file, s string, getWriter func(string) (io.WriteCloser, error)) error {
+	w, err := getWriter(file)
+	if err != nil {
+		return err
+	}
+
+	defer w.Close()
+	_, err = io.WriteString(w, s)
+	return err
+}
+
+func formatFile(
 	filename string,
 	getNodeFilter func(fset *token.FileSet) nodeFilter,
-	w io.Writer,
-) (err error) {
+) (_ string, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		return err
+		return ``, err
 	}
 
 	originalFset := token.NewFileSet()
 	_, err = parser.ParseFile(originalFset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		return err
+		return ``, err
 	}
 
 	nf := getNodeFilter(originalFset)
@@ -227,10 +227,12 @@ func writeFile(
 	)
 
 	newFileContents := &strings.Builder{}
-	format.Node(newFileContents, fset, newF)
+	err = format.Node(newFileContents, fset, newF)
+	if err != nil {
+		return ``, err
+	}
 
-	_, err = io.WriteString(w, newFileContents.String())
-	return err
+	return newFileContents.String(), nil
 }
 
 func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {

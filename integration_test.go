@@ -40,22 +40,18 @@ func TestPatch(t *testing.T) {
 	})
 
 	t.Run(`same file without patch`, func(t *testing.T) {
-		sb := &strings.Builder{}
-
-		err := writeFile(`testdata/test_with_diff.go`, allNodes, sb)
+		formatted, err := formatFile(`testdata/test_with_diff.go`, allNodes)
 		require.NoError(t, err)
 
-		assertMatchesFileContents(t, `testdata/test_without_diff_exp.go`, sb.String())
+		assertMatchesFileContents(t, `testdata/test_without_diff_exp.go`, formatted)
 	})
 }
 
 func TestFormat(t *testing.T) {
-	sb := &strings.Builder{}
-
-	err := writeFile(`testdata/complex.go`, allNodes, sb)
+	formatted, err := formatFile(`testdata/complex.go`, allNodes)
 	require.NoError(t, err)
 
-	assertMatchesFileContents(t, `testdata/complex_exp.go`, sb.String())
+	assertMatchesFileContents(t, `testdata/complex_exp.go`, formatted)
 }
 
 func assertMatchesFileContents(t testing.TB, expFile string, actContents string) {
