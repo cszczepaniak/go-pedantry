@@ -1,0 +1,10 @@
+diff --git a/testdata/test.go b/testdata/test.go
+index 089369d..4ea2f97 100644
+--- a/testdata/test.go
++++ b/testdata/test.go
+@@ -5,3 +5,5 @@ func a(string, string, string, string, string, string, string, string, string, s
+ }
+ 
+ var A = a(`123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`)
++
++var B = a(`123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`, `123`)

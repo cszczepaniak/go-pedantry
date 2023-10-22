@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -73,7 +72,7 @@ func main() {
 	}
 
 	if st.IsDir() {
-		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, err error) error {
+		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, _ error) error {
 			if d.IsDir() {
 				return nil
 			}
@@ -81,17 +80,29 @@ func main() {
 				return nil
 			}
 
+			w, err := getWriter(path)
+			if err != nil {
+				return err
+			}
+			defer w.Close()
+
 			return writeFile(path, func(*token.FileSet) nodeFilter {
 				return allNodesFilter{}
-			}, getWriter)
+			}, w)
 		})
 		if err != nil {
 			panic(err)
 		}
 	} else {
+		w, err := getWriter(input)
+		if err != nil {
+			panic(err)
+		}
+		defer w.Close()
+
 		err = writeFile(input, func(*token.FileSet) nodeFilter {
 			return allNodesFilter{}
-		}, getWriter)
+		}, w)
 		if err != nil {
 			panic(err)
 		}
@@ -117,12 +128,21 @@ func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)
 	}
 
 	for _, file := range parsed.ChangedFiles() {
-		err := writeFile(file, func(fset *token.FileSet) nodeFilter {
-			return patchNodeFilter{
-				p:    parsed,
-				fset: fset,
-			}
-		}, getWriter)
+		w, err := getWriter(file)
+		if err != nil {
+			return err
+		}
+
+		func() {
+			defer w.Close()
+
+			err = writeFile(file, func(fset *token.FileSet) nodeFilter {
+				return patchNodeFilter{
+					p:    parsed,
+					fset: fset,
+				}
+			}, w)
+		}()
 		if err != nil {
 			return err
 		}
@@ -154,23 +174,8 @@ func (pnf patchNodeFilter) formatNode(n ast.Node) bool {
 func writeFile(
 	filename string,
 	getNodeFilter func(fset *token.FileSet) nodeFilter,
-	getWriter func(filename string) (io.WriteCloser, error),
+	w io.Writer,
 ) (err error) {
-	w, err := getWriter(filename)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		closeErr := w.Close()
-		if closeErr != nil {
-			if err != nil {
-				err = errors.Join(err, closeErr)
-			} else {
-				err = closeErr
-			}
-		}
-	}()
-
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
@@ -219,28 +224,6 @@ func writeFile(
 
 	format.Node(w, fset, newF)
 	return nil
-}
-
-func dumpAST(fset *token.FileSet, f *ast.File) {
-	depth := 0
-	astutil.Apply(f, func(c *astutil.Cursor) bool {
-		if c.Node() == nil {
-			return false
-		}
-		padding := ``
-		if depth > 0 {
-			padding = strings.Repeat("\t", depth)
-		}
-
-		p := fset.Position(c.Node().Pos())
-
-		fmt.Printf("%s%T %#v [%s] {%v:%v}\n", padding, c.Node(), c.Node(), c.Name(), p.Line, p.Offset)
-		depth++
-		return true
-	}, func(c *astutil.Cursor) bool {
-		depth--
-		return true
-	})
 }
 
 func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {
