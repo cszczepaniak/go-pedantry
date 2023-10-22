@@ -1,29 +1,206 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"go/ast"
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/cszczepaniak/go-pedantry/patch"
 	"golang.org/x/tools/go/ast/astutil"
 )
 
+type stdoutWriteCloser struct {
+	stdout *os.File
+}
+
+func newStdoutWriteCloser() *stdoutWriteCloser {
+	return &stdoutWriteCloser{
+		stdout: os.Stdout,
+	}
+}
+
+func (s *stdoutWriteCloser) Write(p []byte) (int, error) {
+	return s.stdout.Write(p)
+}
+
+func (s *stdoutWriteCloser) Close() error {
+	return nil
+}
+
 func main() {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, ``, []byte(sampleCode2), parser.SpuriousErrors)
+	var (
+		write    bool
+		patchArg string
+		input    string
+	)
+
+	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
+	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
+	flag.StringVar(&patchArg, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
+	flag.Parse()
+
+	if patchArg != `` && input != `` {
+		panic(`patch and input cannot both be provided`)
+	}
+
+	getWriter := func(filename string) (io.WriteCloser, error) {
+		if write {
+			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+		}
+		return newStdoutWriteCloser(), nil
+	}
+
+	if patchArg != `` {
+		err := handlePatch(patchArg, getWriter)
+		if err != nil {
+			panic(err)
+		}
+		return
+	}
+
+	st, err := os.Stat(input)
 	if err != nil {
 		panic(err)
 	}
 
-	dumpAST(fset, f)
+	if st.IsDir() {
+		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, _ error) error {
+			if d.IsDir() {
+				return nil
+			}
+			if !strings.HasSuffix(path, `.go`) {
+				return nil
+			}
+
+			formatted, err := formatFile(input, allNodes)
+			if err != nil {
+				return err
+			}
+
+			return writeFile(input, formatted, getWriter)
+		})
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		formatted, err := formatFile(input, allNodes)
+		if err != nil {
+			panic(err)
+		}
+
+		err = writeFile(input, formatted, getWriter)
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)) error {
+	var p io.Reader
+	if patchArg == `-` {
+		p = os.Stdin
+	} else {
+		patchFile, err := os.Open(patchArg)
+		if err != nil {
+			panic(err)
+		}
+		defer patchFile.Close()
+		p = patchFile
+	}
+
+	parsed, err := patch.Parse(p)
+	if err != nil {
+		return err
+	}
+
+	for _, file := range parsed.ChangedFiles() {
+		formatted, err := formatFile(file, func(fset *token.FileSet) nodeFilter {
+			return patchNodeFilter{
+				p:    parsed,
+				fset: fset,
+			}
+		})
+		if err != nil {
+			return err
+		}
+
+		err = writeFile(file, formatted, getWriter)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+type nodeFilter interface {
+	formatNode(n ast.Node) bool
+}
+
+type allNodesFilter struct{}
+
+func (allNodesFilter) formatNode(ast.Node) bool {
+	return true
+}
+
+func allNodes(*token.FileSet) nodeFilter {
+	return allNodesFilter{}
+}
+
+type patchNodeFilter struct {
+	p    *patch.Patch
+	fset *token.FileSet
+}
+
+func (pnf patchNodeFilter) formatNode(n ast.Node) bool {
+	pos := pnf.fset.Position(n.Pos())
+	return pnf.p.IsLineTouched(pos.Filename, pos.Line)
+}
+
+func writeFile(file, s string, getWriter func(string) (io.WriteCloser, error)) error {
+	w, err := getWriter(file)
+	if err != nil {
+		return err
+	}
+
+	defer w.Close()
+	_, err = io.WriteString(w, s)
+	return err
+}
+
+func formatFile(
+	filename string,
+	getNodeFilter func(fset *token.FileSet) nodeFilter,
+) (_ string, err error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return ``, err
+	}
+
+	originalFset := token.NewFileSet()
+	_, err = parser.ParseFile(originalFset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return ``, err
+	}
+
+	nf := getNodeFilter(originalFset)
 
 	newF := astutil.Apply(f,
 		func(c *astutil.Cursor) bool {
 			if c.Node() == nil {
+				return true
+			}
+
+			if !nf.formatNode(c.Node()) {
 				return true
 			}
 
@@ -34,9 +211,9 @@ func main() {
 				putFunctionCallArgsOnSeparateLines(tf, tn)
 
 				sel, ok := tn.Fun.(*ast.SelectorExpr)
-				if ok && hasChildCallSelector(c.Node()) {
-					chCall, childIsCall := sel.X.(*ast.CallExpr)
-					if childIsCall && sourceLengthOfList(chCall.Args) <= 50 {
+				if ok {
+					_, childIsCall := sel.X.(*ast.CallExpr)
+					if childIsCall {
 						addNewline(tf, sel.Sel.NamePos)
 					}
 					return true
@@ -49,29 +226,13 @@ func main() {
 		}, nil,
 	)
 
-	format.Node(os.Stdout, fset, newF)
-}
+	newFileContents := &strings.Builder{}
+	err = format.Node(newFileContents, fset, newF)
+	if err != nil {
+		return ``, err
+	}
 
-func dumpAST(fset *token.FileSet, f *ast.File) {
-	depth := 0
-	astutil.Apply(f, func(c *astutil.Cursor) bool {
-		if c.Node() == nil {
-			return false
-		}
-		padding := ``
-		if depth > 0 {
-			padding = strings.Repeat("\t", depth)
-		}
-
-		p := fset.Position(c.Node().Pos())
-
-		fmt.Printf("%s%T %#v [%s] {%v:%v}\n", padding, c.Node(), c.Node(), c.Name(), p.Line, p.Offset)
-		depth++
-		return true
-	}, func(c *astutil.Cursor) bool {
-		depth--
-		return true
-	})
+	return newFileContents.String(), nil
 }
 
 func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {
@@ -113,29 +274,6 @@ func sourceLengthOfList[T ast.Node](items []T) int {
 	return int(items[len(items)-1].End() - items[0].Pos())
 }
 
-func isCallSelector(n ast.Node) (*ast.CallExpr, *ast.SelectorExpr, bool) {
-	call, ok := n.(*ast.CallExpr)
-	if !ok {
-		return nil, nil, false
-	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return nil, nil, false
-	}
-
-	return call, sel, true
-}
-
-func hasChildCallSelector(n ast.Node) bool {
-	_, sel, ok := isCallSelector(n)
-	if !ok {
-		return false
-	}
-
-	_, _, ok = isCallSelector(sel.X)
-	return ok
-}
-
 func addNewline(f *token.File, at token.Pos) {
 	offset := f.Offset(at)
 
@@ -168,24 +306,3 @@ func addNewline(f *token.File, at token.Pos) {
 		panic(fmt.Sprintf("could not set lines to %v", lines))
 	}
 }
-
-const sampleCode = `package something
-
-func a(aaa int, bbb bool, ccc bool, ddd string, eee int, fff bool, ggg bool, hhh int) {}
-
-func something() {
-	another.DoSomething(11111, 111, 111, 11, 11, 111111, 1111, 1111, 1111, 1111, 2).A(true).B("hey").C(abc)
-}`
-
-const sampleCode2 = `package something
-
-func a(aaa int, bbb bool, ccc bool, ddd string, eee int, fff bool, ggg bool, hhh int) {}
-`
-
-const desiredCode = `package something
-
-func something() {
-	another.
-		DoSomething(1, 2).
-		A(true)
-}`
