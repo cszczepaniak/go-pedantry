@@ -161,6 +161,10 @@ func (allNodesFilter) formatNode(ast.Node) bool {
 	return true
 }
 
+func allNodes(*token.FileSet) nodeFilter {
+	return allNodesFilter{}
+}
+
 type patchNodeFilter struct {
 	p    *patch.Patch
 	fset *token.FileSet
