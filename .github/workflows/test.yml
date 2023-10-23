@@ -24,4 +24,6 @@ jobs:
     - name: Check Formatting
       run: |
         set -e
-        gofmt -l . | xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run go fmt % to fix."
+        gofmt -l . > fmt.txt
+        xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run go fmt % to fix." < fmt.txt
+        diff <(echo -n) fmt.txt
