@@ -8,8 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 
-
-	
 	"io"
 	"io/fs"
 	"os"
