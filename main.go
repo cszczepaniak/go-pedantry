@@ -7,7 +7,6 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
-
 	"io"
 	"io/fs"
 	"os"
