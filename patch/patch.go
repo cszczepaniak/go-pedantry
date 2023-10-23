@@ -55,6 +55,7 @@ func (fp *FilePatch) insertTouchedLine(l int) {
 func (fp *FilePatch) isLineTouched(l int) bool {
 	_, ok := fp.touchedLines[l]
 	return ok
+	
 }
 
 func Parse(r io.Reader) (*Patch, error) {
