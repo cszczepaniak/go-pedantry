@@ -22,8 +22,9 @@ jobs:
     - run: go vet ./...
 
     - run: |
+        set -e
         UNFORMATTED=$(gofmt -l .)
         echo $UNFORMATTED
         if [ -n $UNFORMATTED ]; then
-          echo $UNFORMATTED | xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run `go fmt %` to fix."
+          echo $UNFORMATTED | xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run go fmt % to fix."
         fi
