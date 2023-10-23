@@ -21,4 +21,9 @@ jobs:
     - run: go test ./...
     - run: go vet ./...
 
-    - run: diff <(echo -n) <(gofmt -s -d .)
+    - run: |
+        UNFORMATTED=$(gofmt -l .)
+        echo $UNFORMATTED
+        if [ -n $UNFORMATTED ]; then
+          echo $UNFORMATTED | xargs -I % echo "::error file=%,line=1,title=gofmt::'Unformatted file. Run go fmt to fix.'"
+        fi
