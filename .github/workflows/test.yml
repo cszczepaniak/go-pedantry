@@ -21,10 +21,7 @@ jobs:
     - run: go test ./...
     - run: go vet ./...
 
-    - run: |
+    - name: Check Formatting
+      run: |
         set -e
-        UNFORMATTED=$(gofmt -l .)
-        echo $UNFORMATTED
-        if [ -n $UNFORMATTED ]; then
-          echo $UNFORMATTED | xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run go fmt % to fix."
-        fi
+        gofmt -l . | xargs -I % echo "::error file=%,line=1,title=gofmt::Unformatted file. Run go fmt % to fix."
