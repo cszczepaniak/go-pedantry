@@ -17,32 +17,34 @@ import (
 	"golang.org/x/tools/go/ast/astutil"
 )
 
-type stdoutWriteCloser struct {
-	stdout *os.File
+type nopWriteCloser struct {
+	w io.Writer
 }
 
-func newStdoutWriteCloser() *stdoutWriteCloser {
-	return &stdoutWriteCloser{
-		stdout: os.Stdout,
-	}
+func (n nopWriteCloser) Write(p []byte) (int, error) {
+	return n.w.Write(p)
 }
 
-func (s *stdoutWriteCloser) Write(p []byte) (int, error) {
-	return s.stdout.Write(p)
-}
-
-func (s *stdoutWriteCloser) Close() error {
+func (n nopWriteCloser) Close() error {
 	return nil
+}
+
+func nopCloser(w io.Writer) io.WriteCloser {
+	return nopWriteCloser{
+		w: w,
+	}
 }
 
 func main() {
 	var (
 		write    bool
+		list     bool
 		patchArg string
 		input    string
 	)
 
 	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
+	flag.BoolVar(&list, `l`, false, `If true, list the files that would be changed to stdout. If -w is not set, this overrides printing the contents of changed files to stdout.`)
 	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
 	flag.StringVar(&patchArg, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
 	flag.Parse()
@@ -54,12 +56,20 @@ func main() {
 	getWriter := func(filename string) (io.WriteCloser, error) {
 		if write {
 			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
+		} else if list {
+			// If we're listing, don't write formatted files to stdout.
+			return nopCloser(io.Discard), nil
 		}
-		return newStdoutWriteCloser(), nil
+		return nopCloser(os.Stdout), nil
+	}
+
+	listSink := io.Discard
+	if list {
+		listSink = os.Stdout
 	}
 
 	if patchArg != `` {
-		err := handlePatch(patchArg, getWriter)
+		err := handlePatch(patchArg, getWriter, listSink)
 		if err != nil {
 			panic(err)
 		}
@@ -80,7 +90,7 @@ func main() {
 				return nil
 			}
 
-			formatted, err := formatFile(input, allNodes)
+			formatted, err := formatFile(input, allNodes, listSink)
 			if err != nil {
 				return err
 			}
@@ -91,7 +101,7 @@ func main() {
 			panic(err)
 		}
 	} else {
-		formatted, err := formatFile(input, allNodes)
+		formatted, err := formatFile(input, allNodes, listSink)
 		if err != nil {
 			panic(err)
 		}
@@ -103,7 +113,7 @@ func main() {
 	}
 }
 
-func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)) error {
+func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error), listSink io.Writer) error {
 	var p io.Reader
 	if patchArg == `-` {
 		p = os.Stdin
@@ -122,12 +132,16 @@ func handlePatch(patchArg string, getWriter func(string) (io.WriteCloser, error)
 	}
 
 	for _, file := range parsed.ChangedFiles() {
-		formatted, err := formatFile(file, func(fset *token.FileSet) nodeFilter {
-			return patchNodeFilter{
-				p:    parsed,
-				fset: fset,
-			}
-		})
+		formatted, err := formatFile(
+			file,
+			func(fset *token.FileSet) nodeFilter {
+				return patchNodeFilter{
+					p:    parsed,
+					fset: fset,
+				}
+			},
+			listSink,
+		)
 		if err != nil {
 			return err
 		}
@@ -179,6 +193,7 @@ func writeFile(file, s string, getWriter func(string) (io.WriteCloser, error)) e
 func formatFile(
 	filename string,
 	getNodeFilter func(fset *token.FileSet) nodeFilter,
+	listSink io.Writer,
 ) (_ string, err error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, filename, nil, parser.ParseComments|parser.SkipObjectResolution)
@@ -193,6 +208,8 @@ func formatFile(
 	}
 
 	nf := getNodeFilter(originalFset)
+
+	wroteFile := false
 
 	newF := astutil.Apply(f,
 		func(c *astutil.Cursor) bool {
@@ -220,7 +237,12 @@ func formatFile(
 				}
 			case *ast.FuncDecl:
 				putFunctionDeclArgsOnSeparateLines(tf, tn)
+			default:
+				return true
 			}
+
+			// Because of the default case, if we reach here, it means we did format a file.
+			wroteFile = true
 
 			return true
 		}, nil,
@@ -230,6 +252,10 @@ func formatFile(
 	err = format.Node(newFileContents, fset, newF)
 	if err != nil {
 		return ``, err
+	}
+
+	if wroteFile {
+		fmt.Fprintln(listSink, filename)
 	}
 
 	return newFileContents.String(), nil

@@ -33,25 +33,34 @@ func TestPatch(t *testing.T) {
 	t.Run(`with patch`, func(t *testing.T) {
 		getWriter, sb := newTestWriter()
 
-		err := handlePatch(`testdata/sample.diff`, getWriter)
+		listSink := &strings.Builder{}
+
+		err := handlePatch(`testdata/sample.diff`, getWriter, listSink)
 		require.NoError(t, err)
 
 		assertMatchesFileContents(t, `testdata/test_with_diff_exp.go`, sb.String())
+		assert.Equal(t, []string{`testdata/test_with_diff.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
 	})
 
 	t.Run(`same file without patch`, func(t *testing.T) {
-		formatted, err := formatFile(`testdata/test_with_diff.go`, allNodes)
+		listSink := &strings.Builder{}
+
+		formatted, err := formatFile(`testdata/test_with_diff.go`, allNodes, listSink)
 		require.NoError(t, err)
 
 		assertMatchesFileContents(t, `testdata/test_without_diff_exp.go`, formatted)
+		assert.Equal(t, []string{`testdata/test_with_diff.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
 	})
 }
 
 func TestFormat(t *testing.T) {
-	formatted, err := formatFile(`testdata/complex.go`, allNodes)
+	listSink := &strings.Builder{}
+
+	formatted, err := formatFile(`testdata/complex.go`, allNodes, listSink)
 	require.NoError(t, err)
 
 	assertMatchesFileContents(t, `testdata/complex_exp.go`, formatted)
+	assert.Equal(t, []string{`testdata/complex.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
 }
 
 func assertMatchesFileContents(t testing.TB, expFile string, actContents string) {
