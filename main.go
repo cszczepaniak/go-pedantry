@@ -82,7 +82,7 @@ func main() {
 	}
 
 	if st.IsDir() {
-		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, _ error) error {
+		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, errr error) error {
 			if d.IsDir() {
 				return nil
 			}
@@ -90,12 +90,12 @@ func main() {
 				return nil
 			}
 
-			formatted, err := formatFile(input, allNodes, listSink)
+			formatted, err := formatFile(path, allNodes, listSink)
 			if err != nil {
 				return err
 			}
 
-			return writeFile(input, formatted, getWriter)
+			return writeFile(path, formatted, getWriter)
 		})
 		if err != nil {
 			panic(err)
