@@ -281,7 +281,7 @@ func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l lin
 	for i := 0; i < len(elems); i++ {
 		el := elems[i]
 
-		if i == len(elems)-1 && l.line(el.Pos()) == l.line(el.End()) {
+		if i == len(elems)-1 && l.line(el.Pos()) == l.line(call.Rparen) {
 			addNewline(f, el.End())
 			ret = true
 		}
