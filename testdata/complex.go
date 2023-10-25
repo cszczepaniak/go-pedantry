@@ -28,6 +28,14 @@ func (b *Builder) LotsOfArgs(string, string, string, string, string, string, str
 	return b
 }
 
+func (b *Builder) LotsOfArgs2(string, string, string, string, string,
+	string, string,
+	string, string,
+	string,
+) *Builder {
+	return b
+}
+
 func something() {
 	b := somepackage.NewBuilder().AIsForAardvark().
 		BIsForBatman(3, 4).LotsOfArgs(`abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`).
