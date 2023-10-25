@@ -1,66 +1,64 @@
 package main
 
 import (
-	"io"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/cszczepaniak/go-pedantry/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-type testWriter struct {
-	*strings.Builder
-}
-
-func (tw testWriter) Close() error {
-	return nil
-}
-
-func newTestWriter() (func(string) (io.WriteCloser, error), *strings.Builder) {
-	sb := &strings.Builder{}
-	tw := testWriter{
-		Builder: sb,
-	}
-
-	return func(s string) (io.WriteCloser, error) {
-		return tw, nil
-	}, sb
-}
-
 func TestPatch(t *testing.T) {
 	t.Run(`with patch`, func(t *testing.T) {
-		getWriter, sb := newTestWriter()
-
-		listSink := &strings.Builder{}
-
-		err := handlePatch(`testdata/sample.diff`, getWriter, listSink)
+		sb := &strings.Builder{}
+		err := run(
+			config.Config{
+				Patch: `testdata/sample.diff`,
+			},
+			sb,
+		)
 		require.NoError(t, err)
-
 		assertMatchesFileContents(t, `testdata/test_with_diff_exp.go`, sb.String())
-		assert.Equal(t, []string{`testdata/test_with_diff.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
 	})
 
 	t.Run(`same file without patch`, func(t *testing.T) {
-		listSink := &strings.Builder{}
-
-		formatted, err := formatFile(`testdata/test_with_diff.go`, allNodes, listSink)
+		sb := &strings.Builder{}
+		err := run(
+			config.Config{
+				Input: `testdata/test_with_diff.go`,
+			},
+			sb,
+		)
 		require.NoError(t, err)
-
-		assertMatchesFileContents(t, `testdata/test_without_diff_exp.go`, formatted)
-		assert.Equal(t, []string{`testdata/test_with_diff.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
+		assertMatchesFileContents(t, `testdata/test_without_diff_exp.go`, sb.String())
 	})
 }
 
 func TestFormat(t *testing.T) {
-	listSink := &strings.Builder{}
-
-	formatted, err := formatFile(`testdata/complex.go`, allNodes, listSink)
+	sb := &strings.Builder{}
+	err := run(
+		config.Config{
+			Input: `testdata/complex.go`,
+		},
+		sb,
+	)
 	require.NoError(t, err)
+	assertMatchesFileContents(t, `testdata/complex_exp.go`, sb.String())
+}
 
-	assertMatchesFileContents(t, `testdata/complex_exp.go`, formatted)
-	assert.Equal(t, []string{`testdata/complex.go`}, strings.Split(strings.TrimSpace(listSink.String()), "\n"))
+func TestList(t *testing.T) {
+	sb := &strings.Builder{}
+	err := run(
+		config.Config{
+			Input: `testdata`,
+			List:  true,
+		},
+		sb,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "testdata/complex.go\ntestdata/test_with_diff.go\ntestdata/test_with_diff_exp.go\n", sb.String())
 }
 
 func assertMatchesFileContents(t testing.TB, expFile string, actContents string) {

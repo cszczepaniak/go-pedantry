@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cszczepaniak/go-pedantry/config"
 	"github.com/cszczepaniak/go-pedantry/patch"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -36,53 +38,51 @@ func nopCloser(w io.Writer) io.WriteCloser {
 }
 
 func main() {
-	var (
-		write    bool
-		list     bool
-		patchArg string
-		input    string
-	)
+	var cfg config.Config
 
-	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
-	flag.BoolVar(&list, `l`, false, `If true, list the files that would be changed to stdout. If -w is not set, this overrides printing the contents of changed files to stdout.`)
-	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
-	flag.StringVar(&patchArg, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
+	flag.BoolVar(&cfg.Write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
+	flag.BoolVar(&cfg.List, `l`, false, `If true, list the files that would be changed to stdout. If -w is not set, this overrides printing the contents of changed files to stdout.`)
+	flag.StringVar(&cfg.Input, `input`, ``, `The input file or directory to consider.`)
+	flag.StringVar(&cfg.Patch, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
 	flag.Parse()
 
-	if patchArg != `` && input != `` {
-		panic(`patch and input cannot both be provided`)
+	err := run(cfg, os.Stdout)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func run(cfg config.Config, stdout io.Writer) error {
+	if cfg.Patch != `` && cfg.Input != `` {
+		return errors.New(`patch and input cannot both be provided`)
 	}
 
 	getWriter := func(filename string) (io.WriteCloser, error) {
-		if write {
+		if cfg.Write {
 			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		} else if list {
+		} else if cfg.List {
 			// If we're listing, don't write formatted files to stdout.
 			return nopCloser(io.Discard), nil
 		}
-		return nopCloser(os.Stdout), nil
+		return nopCloser(stdout), nil
 	}
 
 	listSink := io.Discard
-	if list {
-		listSink = os.Stdout
+	if cfg.List {
+		listSink = stdout
 	}
 
-	if patchArg != `` {
-		err := handlePatch(patchArg, getWriter, listSink)
-		if err != nil {
-			panic(err)
-		}
-		return
+	if cfg.Patch != `` {
+		return handlePatch(cfg.Patch, getWriter, listSink)
 	}
 
-	st, err := os.Stat(input)
+	st, err := os.Stat(cfg.Input)
 	if err != nil {
 		panic(err)
 	}
 
 	if st.IsDir() {
-		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, _ error) error {
+		return filepath.WalkDir(cfg.Input, func(path string, d fs.DirEntry, errr error) error {
 			if d.IsDir() {
 				return nil
 			}
@@ -90,26 +90,20 @@ func main() {
 				return nil
 			}
 
-			formatted, err := formatFile(input, allNodes, listSink)
+			formatted, err := formatFile(path, allNodes, listSink)
 			if err != nil {
 				return err
 			}
 
-			return writeFile(input, formatted, getWriter)
+			return writeFile(path, formatted, getWriter)
 		})
-		if err != nil {
-			panic(err)
-		}
 	} else {
-		formatted, err := formatFile(input, allNodes, listSink)
+		formatted, err := formatFile(cfg.Input, allNodes, listSink)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
-		err = writeFile(input, formatted, getWriter)
-		if err != nil {
-			panic(err)
-		}
+		return writeFile(cfg.Input, formatted, getWriter)
 	}
 }
 
@@ -225,7 +219,9 @@ func formatFile(
 
 			switch tn := c.Node().(type) {
 			case *ast.CallExpr:
-				putFunctionCallArgsOnSeparateLines(tf, tn)
+				wroteFile = putFunctionCallArgsOnSeparateLines(tf, tn, &fsetLiner{
+					fset: originalFset,
+				}) || wroteFile
 
 				sel, ok := tn.Fun.(*ast.SelectorExpr)
 				if ok {
@@ -236,13 +232,12 @@ func formatFile(
 					return true
 				}
 			case *ast.FuncDecl:
-				putFunctionDeclArgsOnSeparateLines(tf, tn)
+				wroteFile = putFunctionDeclArgsOnSeparateLines(tf, tn, &fsetLiner{
+					fset: originalFset,
+				}) || wroteFile
 			default:
 				return true
 			}
-
-			// Because of the default case, if we reach here, it means we did format a file.
-			wroteFile = true
 
 			return true
 		}, nil,
@@ -261,36 +256,75 @@ func formatFile(
 	return newFileContents.String(), nil
 }
 
-func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {
+type liner interface {
+	line(pos token.Pos) int
+}
+
+type fsetLiner struct {
+	fset *token.FileSet
+}
+
+func (l *fsetLiner) line(pos token.Pos) int {
+	tf := l.fset.File(pos)
+	return tf.Line(pos)
+}
+
+func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l liner) bool {
 	elems := call.Args
 
 	if sourceLengthOfList(elems) <= 50 {
-		return
+		return false
 	}
 
-	for i := len(elems) - 1; i >= 0; i-- {
+	ret := false
+	prevLn := l.line(call.Lparen)
+	for i := 0; i < len(elems); i++ {
 		el := elems[i]
-		if i == len(elems)-1 {
+
+		if i == len(elems)-1 && l.line(el.Pos()) == l.line(call.Rparen) {
 			addNewline(f, el.End())
+			ret = true
 		}
+
+		if l := l.line(el.Pos()); l > prevLn {
+			prevLn = l
+			continue
+		}
+
 		addNewline(f, el.Pos())
+		ret = true
 	}
+	return ret
 }
 
-func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl) {
+func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l liner) bool {
 	params := decl.Type.Params.List
 
 	if sourceLengthOfList(params) <= 50 {
-		return
+		return false
 	}
 
-	for i := len(params) - 1; i >= 0; i-- {
+	ret := false
+	prevLn := l.line(decl.Type.Params.Opening)
+	for i := 0; i < len(params); i++ {
 		el := params[i]
+
+		if l := l.line(el.Pos()); l > prevLn {
+			prevLn = l
+			continue
+		}
+
 		addNewline(f, el.Pos())
+		ret = true
 	}
 
-	decl.Type.Params.Closing += 1
-	addNewline(f, decl.Type.Params.Closing)
+	if l.line(decl.Type.Params.Closing) == prevLn {
+		decl.Type.Params.Closing += 1
+		addNewline(f, decl.Type.Params.Closing)
+		ret = true
+	}
+
+	return ret
 }
 
 func sourceLengthOfList[T ast.Node](items []T) int {

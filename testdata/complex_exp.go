@@ -12,15 +12,15 @@ func NewBuilder() *Builder {
 	return &Builder{}
 }
 
-func (b *Builder) A() *Builder {
+func (b *Builder) AIsForAardvark() *Builder {
 	return b
 }
 
-func (b *Builder) B(x, y int) *Builder {
+func (b *Builder) BIsForBatman(x, y int) *Builder {
 	return b
 }
 
-func (b *Builder) C() *Builder {
+func (b *Builder) CIsForCatwoman() *Builder {
 	return b
 }
 
@@ -38,10 +38,25 @@ func (b *Builder) LotsOfArgs(
 	return b
 }
 
+func (b *Builder) LotsOfArgs2(
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+	string,
+) *Builder {
+	return b
+}
+
 func something() {
 	b := somepackage.NewBuilder().
-		A().
-		B(3, 4).
+		AIsForAardvark().
+		BIsForBatman(3, 4).
 		LotsOfArgs(
 			`abcdef`,
 			`abcdef`,
@@ -53,12 +68,12 @@ func something() {
 			`abcdef`,
 			`abcdef`,
 		).
-		C().
-		A()
+		CIsForCatwoman().
+		AIsForAardvark()
 
 	b = NewBuilder().
-		A().
-		B(3, 4).
+		AIsForAardvark().
+		BIsForBatman(3, 4).
 		LotsOfArgs(
 			`abcdef`,
 			`abcdef`,
@@ -70,6 +85,6 @@ func something() {
 			`abcdef`,
 			`abcdef`,
 		).
-		C().
-		A()
+		CIsForCatwoman().
+		AIsForAardvark()
 }
