@@ -303,7 +303,7 @@ func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l lin
 	}
 
 	prevLn := l.line(decl.Type.Params.Opening)
-	for i := len(params) - 1; i >= 0; i-- {
+	for i := 0; i < len(params); i++ {
 		el := params[i]
 
 		if l := l.line(el.Pos()); l > prevLn {
