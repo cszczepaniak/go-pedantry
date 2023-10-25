@@ -232,7 +232,9 @@ func formatFile(
 					return true
 				}
 			case *ast.FuncDecl:
-				putFunctionDeclArgsOnSeparateLines(tf, tn)
+				putFunctionDeclArgsOnSeparateLines(tf, tn, &fsetLiner{
+					fset: originalFset,
+				})
 			default:
 				return true
 			}
@@ -293,15 +295,22 @@ func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l lin
 	}
 }
 
-func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl) {
+func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l liner) {
 	params := decl.Type.Params.List
 
 	if sourceLengthOfList(params) <= 50 {
 		return
 	}
 
+	prevLn := l.line(decl.Type.Params.Opening)
 	for i := len(params) - 1; i >= 0; i-- {
 		el := params[i]
+
+		if l := l.line(el.Pos()); l > prevLn {
+			prevLn = l
+			continue
+		}
+
 		addNewline(f, el.Pos())
 	}
 
