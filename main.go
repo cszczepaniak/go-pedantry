@@ -314,8 +314,10 @@ func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l lin
 		addNewline(f, el.Pos())
 	}
 
-	decl.Type.Params.Closing += 1
-	addNewline(f, decl.Type.Params.Closing)
+	if l.line(decl.Type.Params.Closing) == prevLn {
+		decl.Type.Params.Closing += 1
+		addNewline(f, decl.Type.Params.Closing)
+	}
 }
 
 func sourceLengthOfList[T ast.Node](items []T) int {
