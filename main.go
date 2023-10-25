@@ -219,9 +219,9 @@ func formatFile(
 
 			switch tn := c.Node().(type) {
 			case *ast.CallExpr:
-				putFunctionCallArgsOnSeparateLines(tf, tn, &fsetLiner{
+				wroteFile = putFunctionCallArgsOnSeparateLines(tf, tn, &fsetLiner{
 					fset: originalFset,
-				})
+				}) || wroteFile
 
 				sel, ok := tn.Fun.(*ast.SelectorExpr)
 				if ok {
@@ -232,15 +232,12 @@ func formatFile(
 					return true
 				}
 			case *ast.FuncDecl:
-				putFunctionDeclArgsOnSeparateLines(tf, tn, &fsetLiner{
+				wroteFile = putFunctionDeclArgsOnSeparateLines(tf, tn, &fsetLiner{
 					fset: originalFset,
-				})
+				}) || wroteFile
 			default:
 				return true
 			}
-
-			// Because of the default case, if we reach here, it means we did format a file.
-			wroteFile = true
 
 			return true
 		}, nil,
@@ -272,13 +269,14 @@ func (l *fsetLiner) line(pos token.Pos) int {
 	return tf.Line(pos)
 }
 
-func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l liner) {
+func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l liner) bool {
 	elems := call.Args
 
 	if sourceLengthOfList(elems) <= 50 {
-		return
+		return false
 	}
 
+	ret := false
 	prevLn := l.line(call.Lparen)
 	for i := 0; i < len(elems); i++ {
 		el := elems[i]
@@ -290,18 +288,22 @@ func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l lin
 
 		if i == len(elems)-1 {
 			addNewline(f, el.End())
+			ret = true
 		}
 		addNewline(f, el.Pos())
+		ret = true
 	}
+	return ret
 }
 
-func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l liner) {
+func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l liner) bool {
 	params := decl.Type.Params.List
 
 	if sourceLengthOfList(params) <= 50 {
-		return
+		return false
 	}
 
+	ret := false
 	prevLn := l.line(decl.Type.Params.Opening)
 	for i := 0; i < len(params); i++ {
 		el := params[i]
@@ -312,12 +314,16 @@ func putFunctionDeclArgsOnSeparateLines(f *token.File, decl *ast.FuncDecl, l lin
 		}
 
 		addNewline(f, el.Pos())
+		ret = true
 	}
 
 	if l.line(decl.Type.Params.Closing) == prevLn {
 		decl.Type.Params.Closing += 1
 		addNewline(f, decl.Type.Params.Closing)
+		ret = true
 	}
+
+	return ret
 }
 
 func sourceLengthOfList[T ast.Node](items []T) int {
