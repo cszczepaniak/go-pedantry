@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cszczepaniak/go-pedantry/config"
 	"github.com/cszczepaniak/go-pedantry/patch"
 	"golang.org/x/tools/go/ast/astutil"
 )
@@ -36,53 +38,51 @@ func nopCloser(w io.Writer) io.WriteCloser {
 }
 
 func main() {
-	var (
-		write    bool
-		list     bool
-		patchArg string
-		input    string
-	)
+	var cfg config.Config
 
-	flag.BoolVar(&write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
-	flag.BoolVar(&list, `l`, false, `If true, list the files that would be changed to stdout. If -w is not set, this overrides printing the contents of changed files to stdout.`)
-	flag.StringVar(&input, `input`, ``, `The input file or directory to consider.`)
-	flag.StringVar(&patchArg, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
+	flag.BoolVar(&cfg.Write, `w`, false, `If true, rewrite files. Otherwise, print to stdout.`)
+	flag.BoolVar(&cfg.List, `l`, false, `If true, list the files that would be changed to stdout. If -w is not set, this overrides printing the contents of changed files to stdout.`)
+	flag.StringVar(&cfg.Input, `input`, ``, `The input file or directory to consider.`)
+	flag.StringVar(&cfg.Patch, `patch`, ``, `A git patch file to consider. If both input and patch are set, the program panics. Use "-" for stdin.`)
 	flag.Parse()
 
-	if patchArg != `` && input != `` {
-		panic(`patch and input cannot both be provided`)
+	err := run(cfg, os.Stdout)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func run(cfg config.Config, stdout io.Writer) error {
+	if cfg.Patch != `` && cfg.Input != `` {
+		return errors.New(`patch and input cannot both be provided`)
 	}
 
 	getWriter := func(filename string) (io.WriteCloser, error) {
-		if write {
+		if cfg.Write {
 			return os.OpenFile(filename, os.O_TRUNC|os.O_WRONLY, os.ModePerm)
-		} else if list {
+		} else if cfg.List {
 			// If we're listing, don't write formatted files to stdout.
 			return nopCloser(io.Discard), nil
 		}
-		return nopCloser(os.Stdout), nil
+		return nopCloser(stdout), nil
 	}
 
 	listSink := io.Discard
-	if list {
-		listSink = os.Stdout
+	if cfg.List {
+		listSink = stdout
 	}
 
-	if patchArg != `` {
-		err := handlePatch(patchArg, getWriter, listSink)
-		if err != nil {
-			panic(err)
-		}
-		return
+	if cfg.Patch != `` {
+		return handlePatch(cfg.Patch, getWriter, listSink)
 	}
 
-	st, err := os.Stat(input)
+	st, err := os.Stat(cfg.Input)
 	if err != nil {
 		panic(err)
 	}
 
 	if st.IsDir() {
-		err = filepath.WalkDir(input, func(path string, d fs.DirEntry, errr error) error {
+		return filepath.WalkDir(cfg.Input, func(path string, d fs.DirEntry, errr error) error {
 			if d.IsDir() {
 				return nil
 			}
@@ -97,19 +97,13 @@ func main() {
 
 			return writeFile(path, formatted, getWriter)
 		})
-		if err != nil {
-			panic(err)
-		}
 	} else {
-		formatted, err := formatFile(input, allNodes, listSink)
+		formatted, err := formatFile(cfg.Input, allNodes, listSink)
 		if err != nil {
-			panic(err)
+			return err
 		}
 
-		err = writeFile(input, formatted, getWriter)
-		if err != nil {
-			panic(err)
-		}
+		return writeFile(cfg.Input, formatted, getWriter)
 	}
 }
 
@@ -225,7 +219,9 @@ func formatFile(
 
 			switch tn := c.Node().(type) {
 			case *ast.CallExpr:
-				putFunctionCallArgsOnSeparateLines(tf, tn)
+				putFunctionCallArgsOnSeparateLines(tf, tn, &fsetLiner{
+					fset: originalFset,
+				})
 
 				sel, ok := tn.Fun.(*ast.SelectorExpr)
 				if ok {
@@ -261,15 +257,35 @@ func formatFile(
 	return newFileContents.String(), nil
 }
 
-func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr) {
+type liner interface {
+	line(pos token.Pos) int
+}
+
+type fsetLiner struct {
+	fset *token.FileSet
+}
+
+func (l *fsetLiner) line(pos token.Pos) int {
+	tf := l.fset.File(pos)
+	return tf.Line(pos)
+}
+
+func putFunctionCallArgsOnSeparateLines(f *token.File, call *ast.CallExpr, l liner) {
 	elems := call.Args
 
 	if sourceLengthOfList(elems) <= 50 {
 		return
 	}
 
-	for i := len(elems) - 1; i >= 0; i-- {
+	prevLn := l.line(call.Lparen)
+	for i := 0; i < len(elems); i++ {
 		el := elems[i]
+
+		if l := l.line(el.Pos()); l > prevLn {
+			prevLn = l
+			continue
+		}
+
 		if i == len(elems)-1 {
 			addNewline(f, el.End())
 		}
