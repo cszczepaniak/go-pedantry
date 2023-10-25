@@ -34,6 +34,8 @@ func something() {
 		CIsForCatwoman().AIsForAardvark()
 
 	b = NewBuilder().AIsForAardvark().
-		BIsForBatman(3, 4).LotsOfArgs(`abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`, `abcdef`).
+		BIsForBatman(3, 4).LotsOfArgs(`abcdef`, `abcdef`, `abcdef`, `abcdef`,
+		`abcdef`, `abcdef`, `abcdef`, `abcdef`,
+		`abcdef`).
 		CIsForCatwoman().AIsForAardvark()
 }
